@@ -9716,6 +9716,10 @@ async function executeScan(
         phase = deepConsolidating ? "consolidating results" : "discovery";
         const message = `Scan phase: ${phase} | Reviews: ${update.completed} completed, ${update.active} active, cap ${update.maximum}`;
         if (dashboard !== null) {
+          dashboard.setDeepProgress({
+            ...update,
+            consolidating: deepConsolidating,
+          });
           dashboard.setStage(phase);
           dashboard.note(message);
           return;

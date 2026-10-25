@@ -27,6 +27,7 @@ import {
   type ScanTokenUsage,
 } from "./cost-model.js";
 import type { ScanActivity } from "./scan-activity.js";
+import type { DeepScanProgress } from "./scan-progress.js";
 import {
   ACCOUNT_LIMITS_UNAVAILABLE,
   USAGE_TIME_UNAVAILABLE,
@@ -161,6 +162,7 @@ export class ScanDashboard {
   } | null = null;
   #stage = "Preparing scan";
   #files: ScanProgress | null = null;
+  #deepProgress: DeepScanProgress | null = null;
   #publicationProgress: { completed: number; total: number } | null = null;
   #cost: Readonly<ScanCost> | null = null;
   #tokens: string | null = null;
@@ -569,6 +571,11 @@ export class ScanDashboard {
     this.#refresh();
   }
 
+  public setDeepProgress(progress: DeepScanProgress): void {
+    this.#deepProgress = progress;
+    this.#refresh();
+  }
+
   public setPublicationProgress(completed: number, total: number): void {
     this.#publicationProgress = { completed, total };
     this.#refresh();
@@ -810,7 +817,7 @@ export class ScanDashboard {
           ]
         : [
             ...(this.#options.mode === "deep"
-              ? []
+              ? this.#deepProgressLines()
               : [
                   `  STAGE    ${this.#stage}`,
                   `  ${count?.label === "reviews" ? "REVIEWS" : "FILES  "}  ${files}`,
@@ -1021,11 +1028,31 @@ export class ScanDashboard {
     return Math.max(1, this.#availableActivityRows(usageRows));
   }
 
+  #deepProgressLines(): string[] {
+    if (this.#deepProgress === null) return [];
+    const { completed, active, maximum, consolidating } = this.#deepProgress;
+    return [
+      ...wrapActivity(
+        "  ",
+        `DEEP     ${consolidating ? "consolidating results" : "discovery"} · consolidation ${consolidating ? "started" : "pending"}`,
+        this.#width(),
+      ),
+      ...wrapActivity(
+        "  ",
+        `REVIEWS  ${formatCount(completed)} completed, ${formatCount(active)} active · max ${formatCount(maximum)} discovery runs`,
+        this.#width(),
+      ),
+    ];
+  }
+
   #availableActivityRows(usageRows: number): number {
     const findingProgress =
       this.#options.presentation === "publication" ||
       this.#options.presentation === "verification";
-    const stageRows = this.#options.mode === "deep" && !findingProgress ? 0 : 2;
+    const stageRows =
+      this.#options.mode === "deep" && !findingProgress
+        ? this.#deepProgressLines().length
+        : 2;
     return (
       (this.#stream.rows ?? 24) -
       FIXED_SCREEN_ROWS -

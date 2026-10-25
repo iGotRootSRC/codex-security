@@ -2963,7 +2963,7 @@ describe("CLI", () => {
     },
   );
 
-  test("omits stage and file counts from interactive Deep scan dashboards", async () => {
+  test("shows persistent progress instead of file counts in interactive Deep scans", async () => {
     const { stderr, runCli } = createCliTest(main, { stderr: true });
 
     const result = fakeResult([], "complete", sampleUsage());
@@ -2974,6 +2974,16 @@ describe("CLI", () => {
         dependencies({
           environment: { NO_COLOR: "1" },
           result,
+          onTurn: (_repository, options) => {
+            for (const consolidating of [true, false]) {
+              options.onDeepProgress?.({
+                completed: 6,
+                active: 0,
+                maximum: 16,
+                consolidating,
+              });
+            }
+          },
           activities: [
             {
               id: "worker-1:read-1",
@@ -3000,6 +3010,15 @@ describe("CLI", () => {
     expect(text).toContain("TOKENS");
     expect(text).not.toContain("COST");
     expect(text).toContain("TIME");
+    const frame = stripVTControlCharacters(
+      stderr.text().split("\u001B[H").at(-1)!,
+    );
+    expect(frame).toContain(
+      "DEEP     consolidating results · consolidation started",
+    );
+    expect(frame).toMatch(
+      /REVIEWS\s+6 completed, 0 active · max 16 discovery runs\n[^\n]*TOKENS/u,
+    );
   });
 
   test("rejects structured modes before starting interactive Codex commands", async () => {

@@ -1887,6 +1887,123 @@ describe("live scan dashboard", () => {
     expect(frame).toContain("TIME");
   });
 
+  test("keeps Deep progress above usage while activity and details scroll", () => {
+    const stderr = capture(true);
+    const input = new DashboardTestInput();
+    const dashboard = createDashboard(
+      { ...stderr.stream, columns: 80, rows: 12 },
+      { mode: "deep", input },
+    );
+    dashboard.start();
+    try {
+      expect(lastFrame(stderr)).not.toContain("DEEP");
+      dashboard.setDeepProgress({ completed: 2, active: 4, maximum: 16 });
+      expect(lastFrame(stderr)).toContain("discovery · consolidation pending");
+      expect(lastFrame(stderr)).toContain(
+        "2 completed, 4 active · max 16 discovery runs",
+      );
+      dashboard.setDeepProgress({
+        completed: 6,
+        active: 0,
+        maximum: 16,
+        consolidating: true,
+      });
+      // Ordinary activity and worker stages must not replace Deep progress.
+      dashboard.setStage("reviewing files");
+      for (let index = 0; index < 20; index++) {
+        dashboard.note(`Activity ${index}`);
+        dashboard.recordDetails({
+          threadId: "synthetic-thread",
+          parentThreadId: null,
+          event: {
+            type: "event_msg",
+            payload: { type: "agent_message", message: `Detail ${index}` },
+          },
+        });
+      }
+      for (const view of ["activity", "details"] as const) {
+        if (view === "details") input.emit("data", "d");
+        for (const offset of [0, 10]) {
+          dashboard.scroll(offset);
+          const frame = lastFrame(stderr);
+          expect(frame).toContain(
+            "consolidating results · consolidation started",
+          );
+          expect(frame).toContain(
+            "6 completed, 0 active · max 16 discovery runs",
+          );
+          expect(frame).not.toContain("2 completed, 4 active");
+          expect(frame).not.toContain("reviewing files");
+          expect(frame).not.toMatch(/%|\bETA\b/u);
+          expect(frame).toMatch(/REVIEWS[^\n]*\n\s*TOKENS/u);
+          expect(frame).toContain(view === "details" ? "Detail" : "Activity");
+          expect(frame).toContain(offset === 0 ? "19" : "above live");
+          expect(frame.split("\n")).toHaveLength(12);
+        }
+      }
+      input.emit("data", "d");
+      expect(lastFrame(stderr)).toContain("Activity");
+    } finally {
+      dashboard.stop();
+    }
+  });
+
+  test.each([
+    [80, 8],
+    [48, 10],
+    [24, 12],
+    [24, 10],
+  ])("fits Deep progress and usage in a %ix%i terminal", (columns, rows) => {
+    const stderr = capture(true);
+    const input = new DashboardTestInput();
+    const terminal = { ...stderr.stream, columns: 80, rows: 24 };
+    const dashboard = createDashboard(terminal, { mode: "deep", input });
+    dashboard.start();
+    try {
+      dashboard.setDeepProgress({
+        completed: 6,
+        active: 0,
+        maximum: 16,
+        consolidating: true,
+      });
+      dashboard.note("Live");
+      terminal.columns = columns;
+      terminal.rows = rows;
+      // Force usage overflow so its allocation competes with Deep progress.
+      dashboard.setUsageObservation({
+        tokensUpdatedAt: null,
+        accountRateLimits: Array.from({ length: 4 }, (_, index) => ({
+          limitId: `pool-${index}`,
+          observedAt: "2026-07-29T12:35:00Z",
+          primary: { usedPercent: 10, windowMinutes: 300, resetsAt: null },
+          secondary: null,
+        })),
+      });
+      for (const view of ["activity", "details"] as const) {
+        if (view === "details") input.emit("data", "d");
+        const frame = stripVTControlCharacters(
+          stderr.text().split("\u001B[H").at(-1)!,
+        );
+        const lines = frame.split("\n");
+        const progress = frame
+          .slice(frame.indexOf("  DEEP"), frame.lastIndexOf("  TIME"))
+          .replace(/\s+/gu, " ");
+        expect(progress).toContain(
+          "DEEP consolidating results · consolidation started",
+        );
+        expect(progress).toContain(
+          "REVIEWS 6 completed, 0 active · max 16 discovery runs",
+        );
+        expect(lines).toHaveLength(rows);
+        expect(lines.every((line) => stringWidth(line) <= columns)).toBe(true);
+        expect(lines.at(-1)).toMatch(/TIME\s+00:00/u);
+        expect(frame).toContain(view === "details" ? "12:35:00 UTC" : "Live");
+      }
+    } finally {
+      dashboard.stop();
+    }
+  });
+
   test("updates the same activity when a command completes", () => {
     const stderr = capture(true);
     let now = STARTED_AT;
